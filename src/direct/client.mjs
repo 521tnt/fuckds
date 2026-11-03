@@ -66,6 +66,37 @@ export function powNotExpired(expireAt, now = Date.now(), safetyMs = POW_EXPIRY_
 }
 
 /**
+ * DeepSeek 的登录态失效不走 HTTP 401，而是 HTTP 200 + 业务错误。
+ * 实测响应：{"code":40003,"msg":"INVALID_TOKEN","data":null}
+ *
+ * 原来只按 res.status === 401/403 判定，导致失效 token 被当成普通上游错误：
+ * 号池只会把它冷却 60s，冷却结束又白白撞一次，每轮都要多付一次失败的往返。
+ * 这里补上业务码判定，让失效 token 走 AuthExpiredError → 停用 24h。
+ */
+const AUTH_INVALID_BIZ_CODES = new Set([
+  'INVALID_TOKEN',
+  'TOKEN_EXPIRED',
+  'TOKEN_INVALID',
+  'USER_NOT_FOUND',
+  'AUTH_FAILED',
+  'NOT_LOGGED_IN',
+]);
+
+/**
+ * @param {unknown} message 上游返回的 msg / biz_msg（实测为 "INVALID_TOKEN"）
+ * @param {unknown} bizCode 上游返回的业务码（实测为数字 40003；有的接口用字符串）
+ */
+function isAuthInvalidBiz(message, bizCode) {
+  if (bizCode !== undefined && bizCode !== null) {
+    if (AUTH_INVALID_BIZ_CODES.has(String(bizCode).trim().toUpperCase())) return true;
+  }
+  if (!message) return false;
+  const m = String(message).trim();
+  if (AUTH_INVALID_BIZ_CODES.has(m.toUpperCase())) return true;
+  return /invalid[_ ]?token|token[ _]?(expired|invalid)|登录.*(失效|过期)|未登录|请重新登录/i.test(m);
+}
+
+/**
  * 直连引擎：不走浏览器，直接调 chat.deepseek.com 的内部接口。
  *
  *   POST /api/v0/chat_session/create       → 每次请求一个新会话
@@ -614,8 +645,11 @@ export class DirectEngine {
     const body = await readJsonSafely(res);
     const session = body?.data?.biz_data?.chat_session;
     if (!session?.id) {
-      if (res.status === 401 || res.status === 403) throw new AuthExpiredError();
+      const bizCode = body?.data?.biz_code ?? body?.code;
       const message = body?.msg || body?.data?.biz_msg || `HTTP ${res.status}`;
+      if (res.status === 401 || res.status === 403 || isAuthInvalidBiz(message, bizCode)) {
+        throw new AuthExpiredError(message);
+      }
       if (res.status === 429 || /频繁/.test(message)) throw new RateLimitError(message);
       throw new UpstreamError(`创建会话失败：${message}`, { code: 'session_failed' });
     }
@@ -631,11 +665,12 @@ export class DirectEngine {
     const body = await readJsonSafely(res);
     const challenge = body?.data?.biz_data?.challenge;
     if (!challenge) {
-      if (res.status === 401 || res.status === 403) throw new AuthExpiredError();
-      throw new UpstreamError(
-        `获取 PoW 挑战失败：${body?.msg || body?.data?.biz_msg || `HTTP ${res.status}`}`,
-        { code: 'pow_challenge_failed' },
-      );
+      const bizCode = body?.data?.biz_code ?? body?.code;
+      const message = body?.msg || body?.data?.biz_msg || `HTTP ${res.status}`;
+      if (res.status === 401 || res.status === 403 || isAuthInvalidBiz(message, bizCode)) {
+        throw new AuthExpiredError(message);
+      }
+      throw new UpstreamError(`获取 PoW 挑战失败：${message}`, { code: 'pow_challenge_failed' });
     }
     return challenge;
   }
