@@ -384,3 +384,23 @@ test('compact: 体积远小于完整 JSON 声明', () => {
   const compact = renderCompactToolDeclarations(tools).join('\n').length;
   assert.ok(compact * 5 < full, `压缩应至少省 80%，实际 ${compact}/${full}`);
 });
+
+test('compact: 枚举取值要带上，否则模型只能猜', () => {
+  const lines = renderCompactToolDeclarations([
+    {
+      function: {
+        name: 'op',
+        description: '操作',
+        parameters: {
+          type: 'object',
+          properties: {
+            mode: { type: 'string', enum: ['snapshot', 'restore', 'prune'] },
+            target: { type: 'string' },
+          },
+          required: ['mode', 'target'],
+        },
+      },
+    },
+  ]);
+  assert.deepEqual(lines, ['op(mode:string[snapshot|restore|prune]*, target:string*) — 操作']);
+});

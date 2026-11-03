@@ -40,7 +40,11 @@ export function renderCompactToolDeclarations(tools = []) {
     const args = params && typeof params === 'object'
       ? Object.entries(params).map(([key, value]) => {
           const type = value?.type || 'any';
-          return `${key}:${type}${required.has(key) ? '*' : ''}`;
+          // 枚举取值必须带上：否则模型只能靠猜（或靠不可靠的按需查询）
+          const enumValues = Array.isArray(value?.enum)
+            ? `[${value.enum.map((item) => String(item)).join('|')}]`
+            : '';
+          return `${key}:${type}${enumValues}${required.has(key) ? '*' : ''}`;
         })
       : [];
 
