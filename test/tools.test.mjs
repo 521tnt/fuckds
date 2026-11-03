@@ -404,3 +404,33 @@ test('compact: 枚举取值要带上，否则模型只能猜', () => {
   ]);
   assert.deepEqual(lines, ['op(mode:string[snapshot|restore|prune]*, target:string*) — 操作']);
 });
+
+test('compact: 枚举取值要限量，否则长枚举会把索引撑爆', () => {
+  const bigEnum = Array.from({ length: 100 }, (_, i) => `value_${i}_something_long`);
+  const lines = renderCompactToolDeclarations([
+    {
+      function: {
+        name: 'tool',
+        description: '工具',
+        parameters: { type: 'object', properties: { mode: { type: 'string', enum: bigEnum } } },
+      },
+    },
+  ]);
+  const line = lines[0];
+  assert.ok(line.length < 250, `单行不该过长，实际 ${line.length}`);
+  assert.ok(line.includes('…'), '应标出还有更多取值');
+  assert.ok(line.includes('value_0_something_long'), '前几个取值要保留');
+});
+
+test('compact: 枚举里的数字/布尔值也能渲染', () => {
+  const lines = renderCompactToolDeclarations([
+    {
+      function: {
+        name: 'tool',
+        description: '工具',
+        parameters: { type: 'object', properties: { level: { enum: [1, 2, true] } } },
+      },
+    },
+  ]);
+  assert.deepEqual(lines, ['tool(level:any[1|2|true]) — 工具']);
+});

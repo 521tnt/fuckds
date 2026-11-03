@@ -160,3 +160,25 @@ test('schema 模式：compact 模式下提示词里带「压缩索引」说明',
   assert.ok(prompt.includes('__tool_schema'), '应当给出查询写法');
   assert.ok(prompt.includes('bash(command:string*'), '应当是压缩格式');
 });
+
+test('schema 展开：客户端自己声明了 __tool_schema 时不劫持', async () => {
+  const ownTool = {
+    type: 'function',
+    function: { name: '__tool_schema', description: '客户端自己的工具', parameters: { type: 'object', properties: {} } },
+  };
+  const web = makeWeb([
+    { text: realCall('__tool_schema', { name: 'x' }), sessionId: 'sess-1', messageId: 'msg-1' },
+  ]);
+  const runChat = createChatRunner({ config: fakeConfig, log: fakeLog, web });
+
+  const result = await runChat({
+    messages: [{ role: 'user', content: '用你自己的 __tool_schema' }],
+    tools: [ownTool, ...tools],
+    thinking: false,
+    stream: false,
+  });
+
+  assert.equal(web.calls.length, 1, '不该为它发起 schema 展开');
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(result.toolCalls[0].name, '__tool_schema', '客户端自己的同名工具必须照实返回');
+});

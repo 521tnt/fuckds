@@ -277,6 +277,11 @@ export function createChatRunner({ config, log, web }) {
         })
         .filter(Boolean);
 
+    /** 客户端自己声明了同名工具时不要劫持它 */
+    const pseudoToolEnabled = !(request.tools ?? []).some(
+      (tool) => (tool?.function ?? tool)?.name === SCHEMA_TOOL,
+    );
+
     /** 从客户端声明的 tools 里找完整定义 */
     const findToolDecl = (name) => {
       const hit = (request.tools ?? []).find((tool) => (tool?.function ?? tool)?.name === name);
@@ -296,7 +301,9 @@ export function createChatRunner({ config, log, web }) {
       let pending = reply;
 
       while (guard < MAX_SCHEMA_LOOPS) {
-        const wanted = pending.toolCalls.filter((call) => call.name === SCHEMA_TOOL);
+        const wanted = pseudoToolEnabled
+          ? pending.toolCalls.filter((call) => call.name === SCHEMA_TOOL)
+          : [];
         if (!wanted.length) break;
         if (!web.supportsContinue || !current?.sessionId) break;
 
@@ -352,24 +359,18 @@ export function createChatRunner({ config, log, web }) {
 
       // 没展开过就别动原来的解析结果：promoteFromReasoning 从思考里提升出来的调用，
       // 重新 evaluate 正文会把它丢掉。但伪工具无论如何都不能漏给客户端。
+      const dropPseudo = (calls) =>
+        pseudoToolEnabled ? calls.filter((call) => call.name !== SCHEMA_TOOL) : calls;
+
       if (!guard) {
-        return {
-          result,
-          reply: {
-            ...reply,
-            toolCalls: reply.toolCalls.filter((call) => call.name !== SCHEMA_TOOL),
-          },
-        };
+        return { result, reply: { ...reply, toolCalls: dropPseudo(reply.toolCalls) } };
       }
 
       // 出口用累计原文统一重解析，再把伪工具剔掉
       const finalReply = evaluate(accumulated);
       return {
         result: current,
-        reply: {
-          ...finalReply,
-          toolCalls: finalReply.toolCalls.filter((call) => call.name !== SCHEMA_TOOL),
-        },
+        reply: { ...finalReply, toolCalls: dropPseudo(finalReply.toolCalls) },
       };
     };
 

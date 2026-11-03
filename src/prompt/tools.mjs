@@ -17,6 +17,10 @@ import { parseDsmlCalls } from './dsml.mjs';
 /** 把 OpenAI tools 定义渲染成「每行一个 JSON」的工具列表 */
 /** 压缩索引里描述保留多少字符 */
 const COMPACT_DESC_CHARS = 60;
+/** 枚举最多列几个值（多了就省略，否则一个长枚举能把压缩索引撑爆） */
+const COMPACT_ENUM_VALUES = 6;
+/** 枚举单个取值的最大长度 */
+const COMPACT_ENUM_ITEM_CHARS = 24;
 
 /**
  * 压缩版工具声明：一行一个工具，只保留「能选对工具 + 能拼出必填参数」所需的信息。
@@ -40,9 +44,19 @@ export function renderCompactToolDeclarations(tools = []) {
     const args = params && typeof params === 'object'
       ? Object.entries(params).map(([key, value]) => {
           const type = value?.type || 'any';
-          // 枚举取值必须带上：否则模型只能靠猜（或靠不可靠的按需查询）
-          const enumValues = Array.isArray(value?.enum)
-            ? `[${value.enum.map((item) => String(item)).join('|')}]`
+          // 枚举取值必须带上：否则模型只能靠猜（或靠不可靠的按需查询）。
+          // 但必须限量：实测 100 个工具 × 100 个长枚举值会把索引撑到 243KB，
+          // 比完整声明还大，直接失去压缩的意义。
+          const enumValues = Array.isArray(value?.enum) && value.enum.length
+            ? `[${value.enum
+                .slice(0, COMPACT_ENUM_VALUES)
+                .map((item) => {
+                  const text = String(item);
+                  return text.length > COMPACT_ENUM_ITEM_CHARS
+                    ? `${text.slice(0, COMPACT_ENUM_ITEM_CHARS)}…`
+                    : text;
+                })
+                .join('|')}${value.enum.length > COMPACT_ENUM_VALUES ? '|…' : ''}]`
             : '';
           return `${key}:${type}${enumValues}${required.has(key) ? '*' : ''}`;
         })
